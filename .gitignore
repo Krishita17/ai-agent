@@ -1,0 +1,19 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.DS_Store
+.venv/
+venv/
+build/
+dist/
+*.db
+*.db-wal
+*.db-shm
+secret.key
+session.token
+.hermes/
+
+# Copied from assets/ by the Pages workflow; assets/ is the source of truth.
+docs/shots/
+docs/logo.svg
+docs/mark.svg
