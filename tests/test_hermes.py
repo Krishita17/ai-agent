@@ -1345,6 +1345,16 @@ class SelfScheduling(unittest.TestCase):
         with self.assertRaises(tools.ToolError):
             tools.t_schedule_task(a, {"every_minutes": 10}, {})
 
+    def test_every_real_template_can_schedule(self):
+        """A blank template has no grants (it inherits the safe defaults, which
+        already include scheduling); every named one grants it explicitly."""
+        from hermes import templates
+        for tpl in templates.TEMPLATES:
+            if not tpl["grants"]:
+                continue
+            self.assertEqual(tpl["grants"].get("schedule_task"), "ask", tpl["id"])
+            self.assertEqual(tpl["grants"].get("list_duties"), "allow", tpl["id"])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
