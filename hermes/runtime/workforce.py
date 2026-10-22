@@ -87,12 +87,18 @@ def _promote_duties() -> None:
             db.ex("UPDATE duties SET active=0 WHERE id=?", (duty["id"],))
             continue
         tid = db.nid()
+        source = "reminder" if duty["once"] else "duty"
         db.ex("""INSERT INTO tasks(id,title,brief,agent_id,status,priority,created_at,
-                 duty_id,source) VALUES(?,?,?,?,'queued','normal',?,?,'duty')""",
-              (tid, duty["title"], duty["brief"], duty["agent_id"], now, duty["id"]))
-        db.ex("UPDATE duties SET next_run_at=?, last_task_id=?, runs=runs+1 WHERE id=?",
-              (now + max(1, duty["cadence_minutes"]) * 60, tid, duty["id"]))
-        bus.emit("duty_due", {"duty": duty["title"], "task_id": tid},
+                 duty_id,source) VALUES(?,?,?,?,'queued','normal',?,?,?)""",
+              (tid, duty["title"], duty["brief"], duty["agent_id"], now, duty["id"], source))
+        if duty["once"]:
+            # A reminder has done its one job; retire it rather than firing again.
+            db.ex("UPDATE duties SET active=0, last_task_id=?, runs=runs+1 WHERE id=?",
+                  (tid, duty["id"]))
+        else:
+            db.ex("UPDATE duties SET next_run_at=?, last_task_id=?, runs=runs+1 WHERE id=?",
+                  (now + max(1, duty["cadence_minutes"]) * 60, tid, duty["id"]))
+        bus.emit("duty_due", {"duty": duty["title"], "task_id": tid, "once": bool(duty["once"])},
                  task_id=tid, agent_id=duty["agent_id"])
 
 

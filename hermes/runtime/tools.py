@@ -598,6 +598,78 @@ def t_plan(agent, args, ctx):
             + "\n".join(f"  {i}. {t}" for i, t in enumerate(created, 1)))
 
 
+def t_schedule_task(agent, args, ctx):
+    """Put work on the clock — a one-off reminder or a standing, recurring duty.
+
+    This is what lets an agent automate itself: having read the inbox once, it
+    can schedule itself to do it again every two hours; having promised a reply
+    by Friday, it can set a reminder to chase it. The workforce dispatcher picks
+    the scheduled task up on its own when the time comes.
+    """
+    title = str(args.get("title", "")).strip()
+    if not title:
+        raise ToolError("A scheduled task needs a title.")
+    brief = str(args.get("brief", "")).strip()
+
+    # Default to the agent itself; a named colleague must actually exist.
+    target = agent
+    who = str(args.get("agent", "")).strip()
+    if who and who.lower() != agent["name"].lower():
+        target = db.q1("SELECT * FROM agents WHERE (name=? OR id=?) AND archived=0", (who, who))
+        if not target:
+            names = [a["name"] for a in db.q("SELECT name FROM agents WHERE archived=0")]
+            raise ToolError(f"No agent named '{who}'. Available: {', '.join(names) or 'none'}")
+
+    every = _int_arg(args, "every_minutes", None)
+    if every is not None and every > 0:
+        cadence, once = max(1, every), 0
+        first = db.now() + cadence * 60
+        when = f"every {cadence} minute{'s' if cadence != 1 else ''}"
+    else:
+        delay = _int_arg(args, "in_minutes", 0) or 0
+        delay = max(0, delay)
+        cadence, once = max(1, delay), 1
+        first = db.now() + delay * 60
+        when = f"in {delay} minute{'s' if delay != 1 else ''}" if delay else "on the next dispatch"
+
+    did = db.nid()
+    db.ex("""INSERT INTO duties(id,agent_id,title,brief,cadence_minutes,next_run_at,
+             active,once,created_at) VALUES(?,?,?,?,?,?,1,?,?)""",
+          (did, target["id"], title, brief, cadence, first, once, db.now()))
+    kind = "reminder" if once else "recurring duty"
+    whose = "yourself" if target["id"] == agent["id"] else target["name"]
+    return (f"Scheduled a {kind} for {whose}: '{title}' — runs {when}. "
+            f"The dispatcher will pick it up automatically. (id {did})")
+
+
+def t_list_duties(agent, args, ctx):
+    """What this agent has standing on its own schedule."""
+    rows = db.q("SELECT * FROM duties WHERE agent_id=? AND active=1 ORDER BY next_run_at",
+                (agent["id"],))
+    if not rows:
+        return "Nothing scheduled. Use schedule_task to put work on the clock."
+    import datetime as _dt
+    lines = []
+    for d in rows:
+        kind = "once" if d["once"] else f"every {d['cadence_minutes']}m"
+        due = _dt.datetime.fromtimestamp(d["next_run_at"] or 0).strftime("%Y-%m-%d %H:%M")
+        lines.append(f"[{d['id']}] {d['title']} — {kind}, next {due}")
+    return "\n".join(lines)
+
+
+def t_cancel_task(agent, args, ctx):
+    """Take something off the schedule. An agent can only cancel its own."""
+    ident = str(args.get("id", "")).strip()
+    if not ident:
+        raise ToolError("Give the id (from list_duties) of what to cancel.")
+    row = db.q1("SELECT * FROM duties WHERE id=? AND agent_id=? AND active=1",
+                (ident, agent["id"]))
+    if not row:
+        raise ToolError(f"No active scheduled task {ident!r} belongs to you.")
+    db.ex("UPDATE duties SET active=0 WHERE id=?", (ident,))
+    return f"Cancelled '{row['title']}'. It will not run again."
+
+
 def t_finish(agent, args, ctx):
     return args.get("summary", "")
 
@@ -659,6 +731,19 @@ SPECS = [
     {"name": "plan", "fn": t_plan, "required": ["steps"], "group": "Control", "danger": "low",
      "desc": "Split a large objective into steps queued as your own follow-up tasks.",
      "params": {"steps": "list of step titles"}},
+    {"name": "schedule_task", "fn": t_schedule_task, "required": ["title"], "group": "Automation", "danger": "medium",
+     "desc": "Put work on the clock: a one-off reminder or a recurring duty the dispatcher runs for you.",
+     "params": {"title": "short title for the scheduled work",
+                "brief": "what to do when it runs",
+                "every_minutes": "recurring cadence in minutes (omit for a one-off)",
+                "in_minutes": "for a one-off: run this many minutes from now, default now",
+                "agent": "whose schedule, default yourself"}},
+    {"name": "list_duties", "fn": t_list_duties, "required": [], "group": "Automation", "danger": "low",
+     "desc": "List what you have standing on your own schedule.",
+     "params": {}},
+    {"name": "cancel_task", "fn": t_cancel_task, "required": ["id"], "group": "Automation", "danger": "medium",
+     "desc": "Cancel one of your own scheduled tasks by id (from list_duties).",
+     "params": {"id": "the duty id to cancel"}},
     {"name": "finish", "fn": t_finish, "required": [], "group": "Control", "danger": "low",
      "desc": "End the task and report your result. Always call this last.",
      "params": {"summary": "your complete answer or report"}},

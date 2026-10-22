@@ -366,6 +366,8 @@ agent is never even told it exists.
 | | `email_template` gives the structure and tone for a kind of message (follow-up, intro, decline, thank-you…) before the agent writes it, so drafts read like a person and not a form letter. |
 | **Memory** | `remember` `recall` |
 | **Team** | `delegate` — hand a subtask to a colleague |
+| **Automation** | `schedule_task` `list_duties` `cancel_task` |
+| | `schedule_task` lets an agent put its own work on the clock — a recurring duty (`every_minutes`) or a one-off reminder (`in_minutes`) — which the dispatcher then picks up on its own. `list_duties` and `cancel_task` let it review and clear its schedule. Sending mail still asks, so an agent can automate *when* it works but never *what* it may do unattended. |
 | **Control** | `plan` `escalate` `finish` |
 
 Two scopes bound all of it:

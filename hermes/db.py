@@ -162,6 +162,9 @@ MIGRATIONS = [
     ("tasks", "source", "TEXT DEFAULT 'operator'"),
     # Which process owns a run, so an interrupted one can be told from a live one.
     ("runs", "pid", "INTEGER"),
+    # A one-off scheduled task — a reminder — fires once and then retires itself
+    # rather than recurring on its cadence like a standing duty.
+    ("duties", "once", "INTEGER DEFAULT 0"),
 ]
 
 

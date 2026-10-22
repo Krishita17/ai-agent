@@ -1280,5 +1280,71 @@ class SeededEmailAgent(unittest.TestCase):
         self.assertEqual(postman["grants"]["run_shell"], "deny")
 
 
+class SelfScheduling(unittest.TestCase):
+    """An agent can put its own work on the clock, and the dispatcher runs it."""
+
+    def _agent_row(self):
+        aid = db.nid()
+        db.ex("""INSERT INTO agents(id,name,role,grants,scopes,status,created_at,updated_at)
+                 VALUES(?,?,?,?,?,'idle',?,?)""",
+              (aid, f"Sched-{aid[:4]}", "test",
+               '{"schedule_task":"allow","list_duties":"allow","cancel_task":"allow","finish":"allow"}',
+               '{"fs_roots":["%s"]}' % WORK, db.now(), db.now()))
+        return db.q1("SELECT * FROM agents WHERE id=?", (aid,))
+
+    def test_a_recurring_duty_is_created_and_reschedules(self):
+        a = self._agent_row()
+        tools.t_schedule_task(a, {"title": "Hourly check", "every_minutes": 60}, {})
+        duty = db.q1("SELECT * FROM duties WHERE agent_id=? AND title='Hourly check'", (a["id"],))
+        self.assertIsNotNone(duty)
+        self.assertEqual(duty["once"], 0)
+        self.assertEqual(duty["cadence_minutes"], 60)
+
+    def test_a_one_off_reminder_fires_once_then_retires(self):
+        from hermes.runtime import workforce
+        a = self._agent_row()
+        tools.t_schedule_task(a, {"title": "Remind me", "in_minutes": 0,
+                                  "brief": "ping the operator"}, {})
+        duty = db.q1("SELECT * FROM duties WHERE agent_id=? AND title='Remind me'", (a["id"],))
+        self.assertEqual(duty["once"], 1)
+        self.assertTrue(duty["active"])
+        # Due now (in_minutes 0), so one promote turns it into a task and retires it.
+        workforce._promote_duties()
+        after = db.q1("SELECT * FROM duties WHERE id=?", (duty["id"],))
+        self.assertEqual(after["active"], 0, "a one-off must not stay on the schedule")
+        task = db.q1("SELECT * FROM tasks WHERE duty_id=?", (duty["id"],))
+        self.assertIsNotNone(task, "the reminder must have produced a task")
+        self.assertEqual(task["source"], "reminder")
+
+    def test_an_agent_sees_only_its_own_schedule(self):
+        a, b = self._agent_row(), self._agent_row()
+        tools.t_schedule_task(a, {"title": "Mine", "every_minutes": 30}, {})
+        tools.t_schedule_task(b, {"title": "Theirs", "every_minutes": 30}, {})
+        listing = tools.t_list_duties(a, {}, {})
+        self.assertIn("Mine", listing)
+        self.assertNotIn("Theirs", listing)
+
+    def test_cancel_only_touches_your_own(self):
+        a, b = self._agent_row(), self._agent_row()
+        tools.t_schedule_task(b, {"title": "Protected", "every_minutes": 30}, {})
+        duty = db.q1("SELECT * FROM duties WHERE agent_id=? AND title='Protected'", (b["id"],))
+        with self.assertRaises(tools.ToolError):
+            tools.t_cancel_task(a, {"id": duty["id"]}, {})
+        self.assertTrue(db.q1("SELECT active FROM duties WHERE id=?", (duty["id"],))["active"])
+        tools.t_cancel_task(b, {"id": duty["id"]}, {})
+        self.assertEqual(db.q1("SELECT active FROM duties WHERE id=?", (duty["id"],))["active"], 0)
+
+    def test_scheduling_is_ask_first_by_default(self):
+        g = tools.default_grants()
+        self.assertEqual(g["schedule_task"], tools.ASK)
+        self.assertEqual(g["cancel_task"], tools.ASK)
+        self.assertEqual(g["list_duties"], tools.ALLOW)
+
+    def test_a_title_is_required(self):
+        a = self._agent_row()
+        with self.assertRaises(tools.ToolError):
+            tools.t_schedule_task(a, {"every_minutes": 10}, {})
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

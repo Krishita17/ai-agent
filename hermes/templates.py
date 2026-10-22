@@ -39,6 +39,7 @@ TEMPLATES = [
                    "remember": "allow", "recall": "allow", "delegate": "ask",
                    "email_list": "allow", "email_read": "allow", "email_search": "allow",
                    "email_template": "allow", "email_draft": "allow", "email_send": "ask",
+                   "schedule_task": "ask", "list_duties": "allow", "cancel_task": "ask",
                    "escalate": "allow", "plan": "allow", "finish": "allow"},
         "duties": [
             {"title": "Morning briefing", "cadence_minutes": 1440,
@@ -77,6 +78,7 @@ TEMPLATES = [
                    "remember": "allow", "recall": "allow", "delegate": "ask",
                    "email_list": "allow", "email_read": "allow", "email_search": "allow",
                    "email_template": "allow", "email_draft": "allow", "email_send": "ask",
+                   "schedule_task": "ask", "list_duties": "allow", "cancel_task": "ask",
                    "escalate": "allow", "plan": "allow", "finish": "allow"},
         "duties": [
             {"title": "Inbox triage", "cadence_minutes": 240,
