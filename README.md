@@ -318,13 +318,14 @@ hermes doctor            # what is actually reachable right now
 
 ### 1 · Personnel — who works for you
 
-Three agents ship with Hermes so there is something to try immediately.
+Four agents ship with Hermes so there is something to try immediately.
 
 | | Agent | Speciality | Default posture |
 |---|---|---|---|
-| 🗺️ | **Atlas** | Research & synthesis | Reads and fetches freely, cannot run commands |
+| 🗺️ | **Atlas** | Research & synthesis | Reads, searches and fetches the web freely, cannot run commands |
 | ⚒️ | **Forge** | Code & automation | Reads freely, asks before writing or running |
 | 📒 | **Ledger** | Files, notes & organisation | Reads and organises, no network access |
+| ✉️ | **Postman** | Email & correspondence | Reads the inbox and drafts replies; never sends without you |
 
 <img src="assets/screenshots/agents.png" alt="The agents view: three agent cards showing model, autonomy and tool counts" width="900">
 
@@ -359,8 +360,10 @@ agent is never even told it exists.
 | **Utility** | `now` `calc` |
 | | `now` is the real clock — a model's idea of today comes from its training data and is confidently wrong. `calc` is exact arithmetic, which matters the moment an agent is adding up invoices. |
 | **System** | `run_shell` |
-| **Network** | `http_fetch` |
-| **Email** | `email_list` `email_read` `email_search` `email_draft` `email_send` |
+| **Network** | `http_fetch` `web_search` `web_read` |
+| | `web_search` looks the open web up through DuckDuckGo (no key); `web_read` fetches a page and hands back readable text with the markup stripped — cheaper in tokens and safer than raw HTML. |
+| **Email** | `email_list` `email_read` `email_search` `email_template` `email_draft` `email_send` |
+| | `email_template` gives the structure and tone for a kind of message (follow-up, intro, decline, thank-you…) before the agent writes it, so drafts read like a person and not a form letter. |
 | **Memory** | `remember` `recall` |
 | **Team** | `delegate` — hand a subtask to a colleague |
 | **Control** | `plan` `escalate` `finish` |

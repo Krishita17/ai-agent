@@ -12,6 +12,7 @@ import datetime
 import fnmatch
 import json
 import os
+import re
 import shutil
 import shlex
 import subprocess
@@ -372,6 +373,116 @@ def t_http_fetch(agent, args, ctx):
     return security.wrap_untrusted(body[:40_000], source)
 
 
+# ----------------------------------------------------------------- web read
+
+# A page an agent fetches is written by strangers, same threat model as an
+# inbox: the markup can hide instructions. Reducing HTML to text strips the
+# script, the style, and anything invisible, and the result still goes through
+# wrap_untrusted so the model sees it framed as data, never as orders.
+_HTML_DROP = re.compile(r"<(script|style|template)[\s\S]*?</\1>", re.I)
+_HTML_TAG = re.compile(r"<[^>]+>")
+_HTML_ENTITIES = (("&nbsp;", " "), ("&amp;", "&"), ("&lt;", "<"),
+                  ("&gt;", ">"), ("&quot;", '"'), ("&#39;", "'"))
+
+
+def _html_to_text(html: str) -> str:
+    text = _HTML_DROP.sub(" ", html)
+    text = _HTML_TAG.sub(" ", text)
+    for entity, char in _HTML_ENTITIES:
+        text = text.replace(entity, char)
+    text = re.sub(r"[ \t]{2,}", " ", text)
+    text = re.sub(r"\n[ \t]+", "\n", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
+def t_web_read(agent, args, ctx):
+    """Fetch a page and hand back readable text instead of raw markup.
+
+    http_fetch returns the bytes as they arrive, which for a real web page is
+    mostly tags. For reading an article or a doc — the common case behind "look
+    this up and summarise it" — plain text is both cheaper in tokens and safer.
+    """
+    url = _check_host(agent, args["url"])
+    req = urllib.request.Request(url, headers={"User-Agent": "Hermes-OpenClaw/1.0"})
+    try:
+        https = urllib.request.HTTPSHandler(context=tlstrust.context())
+    except tlstrust.NoTrustStore as e:
+        raise ToolError(str(e)) from None
+    opener = urllib.request.build_opener(_AllowlistedRedirects(agent), https)
+    try:
+        with opener.open(req, timeout=30) as r:
+            raw = r.read(1_000_000).decode(errors="replace")
+            final = r.geturl()
+    except urllib.error.HTTPError as e:
+        raise ToolError(f"HTTP {e.code} fetching {url}") from None
+    except urllib.error.URLError as e:
+        raise ToolError(f"Could not fetch {url}: {tlstrust.friendly(e.reason)}") from None
+    text = _html_to_text(raw) or "(the page had no readable text)"
+    return security.wrap_untrusted(text[:40_000], f"web page {final}")
+
+
+# --------------------------------------------------------------- web search
+
+# DuckDuckGo's HTML endpoint needs no key and returns a plain page we can read
+# with the same stdlib we use everywhere else — true to the zero-dependency
+# rule. The host is fixed here, not taken from the agent, so this tool can
+# never be pointed at an internal address the way an open fetch could.
+_DDG_ENDPOINT = "https://html.duckduckgo.com/html/"
+_DDG_LINK = re.compile(
+    r'<a[^>]+class="[^"]*result__a[^"]*"[^>]+href="([^"]+)"[^>]*>(.*?)</a>', re.S)
+_DDG_SNIPPET = re.compile(
+    r'<a[^>]+class="[^"]*result__snippet[^"]*"[^>]*>(.*?)</a>', re.S)
+
+
+def _ddg_unwrap(href: str) -> str:
+    """DuckDuckGo wraps each result in a /l/?uddg=<real url> redirect."""
+    if href.startswith("//"):
+        href = "https:" + href
+    query = urllib.parse.urlparse(href).query
+    target = urllib.parse.parse_qs(query).get("uddg")
+    return target[0] if target else href
+
+
+def _parse_ddg(html: str, limit: int) -> list[tuple[str, str, str]]:
+    links = _DDG_LINK.findall(html)
+    snippets = _DDG_SNIPPET.findall(html)
+    out = []
+    for i, (href, title) in enumerate(links[:limit]):
+        snippet = _html_to_text(snippets[i]) if i < len(snippets) else ""
+        out.append((_html_to_text(title), _ddg_unwrap(href), snippet))
+    return out
+
+
+def t_web_search(agent, args, ctx):
+    query = str(args.get("query", "")).strip()
+    if not query:
+        raise ToolError("Empty search query.")
+    limit = max(1, min(_int_arg(args, "limit", 8) or 8, 20))
+    try:
+        ctxssl = tlstrust.context()
+    except tlstrust.NoTrustStore as e:
+        raise ToolError(str(e)) from None
+    data = urllib.parse.urlencode({"q": query}).encode()
+    req = urllib.request.Request(
+        _DDG_ENDPOINT, data=data, method="POST",
+        headers={"User-Agent": "Mozilla/5.0 (compatible; Hermes-OpenClaw/1.0)",
+                 "Content-Type": "application/x-www-form-urlencoded"})
+    try:
+        with urllib.request.urlopen(req, timeout=20, context=ctxssl) as r:
+            html = r.read(800_000).decode(errors="replace")
+    except urllib.error.HTTPError as e:
+        raise ToolError(f"Search failed: HTTP {e.code}") from None
+    except urllib.error.URLError as e:
+        raise ToolError(f"Search failed: {tlstrust.friendly(e.reason)}") from None
+    results = _parse_ddg(html, limit)
+    if not results:
+        return security.wrap_untrusted(f"No results for {query!r}.", "web search")
+    lines = [f"[{i}] {title}\n    {link}\n    {snippet}"
+             for i, (title, link, snippet) in enumerate(results, 1)]
+    return security.wrap_untrusted("\n".join(lines), f"web search for {query!r}")
+
+
 def t_remember(agent, args, ctx):
     db.ex("INSERT INTO memories(id,agent_id,key,value,created_at) VALUES(?,?,?,?,?)",
           (db.nid(), agent["id"], args["key"], args["value"], db.now()))
@@ -525,6 +636,12 @@ SPECS = [
     {"name": "run_shell", "fn": t_run_shell, "required": ["command"], "group": "System", "danger": "critical",
      "desc": "Run a shell command in your working directory.",
      "params": {"command": "the shell command"}},
+    {"name": "web_search", "fn": t_web_search, "required": ["query"], "group": "Network", "danger": "medium",
+     "desc": "Search the web (DuckDuckGo). Returns titles, links and snippets as untrusted data.",
+     "params": {"query": "what to search for", "limit": "how many results, default 8"}},
+    {"name": "web_read", "fn": t_web_read, "required": ["url"], "group": "Network", "danger": "medium",
+     "desc": "Fetch a web page and return it as readable text (markup stripped). Untrusted.",
+     "params": {"url": "the page to read"}},
     {"name": "http_fetch", "fn": t_http_fetch, "required": ["url"], "group": "Network", "danger": "medium",
      "desc": "Fetch a URL and return the response body.",
      "params": {"url": "http(s) URL"}},

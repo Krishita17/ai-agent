@@ -1188,5 +1188,97 @@ class Packaging(unittest.TestCase):
         self.assertEqual(g["read_file"], tools.ALLOW)
 
 
+class WebTools(unittest.TestCase):
+    """Search and page-reading, parsed offline so CI never touches the network."""
+
+    def test_html_is_reduced_to_readable_text(self):
+        html = ("<html><head><style>p{color:red}</style>"
+                "<script>steal()</script></head><body>"
+                "<h1>Title</h1><p>Hello&nbsp;&amp; welcome</p></body></html>")
+        text = tools._html_to_text(html)
+        self.assertIn("Title", text)
+        self.assertIn("Hello & welcome", text)
+        self.assertNotIn("steal()", text, "script bodies must be stripped")
+        self.assertNotIn("color:red", text, "style bodies must be stripped")
+        self.assertNotIn("<", text, "no markup may survive")
+
+    def test_search_results_are_parsed_and_unwrapped(self):
+        # A trimmed shape of DuckDuckGo's HTML endpoint response.
+        html = (
+            '<a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Fa">'
+            'First &amp; best</a>'
+            '<a class="result__snippet">A snippet about the first result.</a>'
+            '<a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.org%2Fb">'
+            'Second</a>'
+            '<a class="result__snippet">Another snippet.</a>')
+        results = tools._parse_ddg(html, 8)
+        self.assertEqual(len(results), 2)
+        title, link, snippet = results[0]
+        self.assertEqual(title, "First & best")
+        self.assertEqual(link, "https://example.com/a", "the uddg redirect must be unwrapped")
+        self.assertIn("first result", snippet)
+
+    def test_web_search_limit_is_bounded(self):
+        many = "".join(
+            f'<a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fx{i}.com">r{i}</a>'
+            for i in range(30))
+        self.assertEqual(len(tools._parse_ddg(many, 5)), 5)
+
+    def test_web_tools_are_registered_and_ask_first(self):
+        for name in ("web_search", "web_read"):
+            self.assertIn(name, tools.BY_NAME)
+        g = tools.default_grants()
+        self.assertEqual(g["web_search"], tools.ASK)
+        self.assertEqual(g["web_read"], tools.ASK)
+
+    def test_web_read_respects_the_network_allowlist(self):
+        locked = agent(scopes='{"net_allow": ["example.com"]}')
+        with self.assertRaises(tools.Denied):
+            tools.t_web_read(locked, {"url": "https://evil.test/page"}, {})
+
+
+class EmailComposition(unittest.TestCase):
+    """The template helper that makes drafts come out polished, not canned."""
+
+    def test_listing_templates_when_no_kind_is_given(self):
+        out = tools.BY_NAME["email_template"]["fn"](agent(), {}, {})
+        self.assertIn("follow_up", out)
+        self.assertIn("warm", out)
+
+    def test_a_template_gives_structure_and_tone(self):
+        out = mail.t_email_template(agent(), {"kind": "follow_up", "tone": "brief"}, {})
+        self.assertIn("follow_up", out)
+        self.assertIn("Suggested subject", out)
+        self.assertIn("Three sentences", out, "the chosen tone's guidance must appear")
+
+    def test_template_defaults_to_a_warm_tone(self):
+        out = mail.t_email_template(agent(), {"kind": "thank_you"}, {})
+        self.assertIn("warm tone", out)
+
+    def test_an_unknown_kind_or_tone_is_reported(self):
+        with self.assertRaises(mail.MailError):
+            mail.t_email_template(agent(), {"kind": "ransom_note"}, {})
+        with self.assertRaises(mail.MailError):
+            mail.t_email_template(agent(), {"kind": "intro", "tone": "menacing"}, {})
+
+    def test_template_is_registered_and_sends_nothing(self):
+        spec = tools.BY_NAME["email_template"]
+        self.assertEqual(spec["danger"], "low")
+        self.assertEqual(tools.default_grants()["email_template"], tools.ALLOW)
+
+
+class SeededEmailAgent(unittest.TestCase):
+    """A fresh install ships with an agent built for correspondence."""
+
+    def test_postman_is_seeded_with_email_but_cannot_send_unattended(self):
+        from hermes import server
+        postman = next(a for a in server.STARTER_AGENTS if a["name"] == "Postman")
+        self.assertEqual(postman["grants"]["email_draft"], "allow")
+        self.assertEqual(postman["grants"]["email_template"], "allow")
+        self.assertEqual(postman["grants"]["email_send"], "ask",
+                         "a seeded agent must never be able to send mail unattended")
+        self.assertEqual(postman["grants"]["run_shell"], "deny")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -218,6 +218,85 @@ def t_email_search(agent, args, ctx):
         except Exception: pass
 
 
+# A template here is a shape, not a form letter. It gives the agent the beats a
+# good message of each kind hits and the subject pattern that fits, then tells
+# it to write the actual words. Canned paragraphs read as canned; structure
+# plus a clear tone instruction produces a draft that sounds like a person.
+_EMAIL_KINDS = {
+    "follow_up": {
+        "subject": "Following up on <topic>",
+        "beats": ["Name the last touchpoint in one line so they remember the thread",
+                  "Say plainly what you need and by when",
+                  "Make the next step a single, easy action"]},
+    "intro": {
+        "subject": "Intro: <you> <> <them>",
+        "beats": ["Who you are and why you are writing, in one sentence",
+                  "The specific reason this person in particular",
+                  "A concrete, low-effort ask — a short call, a pointer, a reply"]},
+    "thank_you": {
+        "subject": "Thank you",
+        "beats": ["Name exactly what you are thanking them for",
+                  "Say what difference it made — be specific, not generic",
+                  "Close warmly without asking for anything new"]},
+    "decline": {
+        "subject": "Re: <their request>",
+        "beats": ["Thank them and say no clearly in the first two lines",
+                  "Give one honest reason, no long justification",
+                  "Leave the door open if you mean to, and don't if you don't"]},
+    "request": {
+        "subject": "Quick ask: <topic>",
+        "beats": ["Lead with the ask itself, not the wind-up",
+                  "Give only the context they need to say yes",
+                  "State the deadline and how little you need from them"]},
+    "reminder": {
+        "subject": "Reminder: <topic>",
+        "beats": ["Reference the earlier message or commitment",
+                  "Restate the one thing outstanding and the date",
+                  "Keep it friendly — assume they simply forgot"]},
+    "apology": {
+        "subject": "Sorry about <thing>",
+        "beats": ["Own it in the first line, no 'if' and no 'but'",
+                  "Say briefly what happened and what you're doing about it",
+                  "Say what changes so it doesn't happen again"]},
+    "update": {
+        "subject": "Update: <project>",
+        "beats": ["Lead with the headline — done, on track, or slipping",
+                  "Three bullets at most: what moved, what's next, what's blocked",
+                  "Name anything you need a decision on"]},
+}
+
+_EMAIL_TONES = {
+    "formal": "Complete sentences, courteous, no contractions. Sign off with your full name.",
+    "warm": "Friendly and personal. A contraction or two. Acknowledge the person, not just the task.",
+    "casual": "Relaxed and short. First-name basis, contractions fine, no stiff phrasing.",
+    "brief": "Three sentences or fewer. No preamble, no sign-off boilerplate. Straight to the ask.",
+    "direct": "Put the point in the first line. No hedging, no 'just', no 'I was wondering'.",
+}
+
+
+def t_email_template(agent, args, ctx):
+    """Hand back the structure and tone for a kind of email, not a form letter."""
+    kind = str(args.get("kind", "")).strip().lower()
+    tone = str(args.get("tone", "warm")).strip().lower()
+    if not kind:
+        return ("Available templates: " + ", ".join(sorted(_EMAIL_KINDS)) + ".\n"
+                "Available tones: " + ", ".join(sorted(_EMAIL_TONES)) + ".\n"
+                "Call email_template again with kind (and optionally tone) to get the shape.")
+    if kind not in _EMAIL_KINDS:
+        raise MailError(f"No template '{kind}'. Available: {', '.join(sorted(_EMAIL_KINDS))}.")
+    if tone not in _EMAIL_TONES:
+        raise MailError(f"No tone '{tone}'. Available: {', '.join(sorted(_EMAIL_TONES))}.")
+    spec = _EMAIL_KINDS[kind]
+    beats = "\n".join(f"  {i}. {b}" for i, b in enumerate(spec["beats"], 1))
+    return (f"Email template · {kind} · {tone} tone\n\n"
+            f"Suggested subject: {spec['subject']}\n\n"
+            f"Hit these beats, in order:\n{beats}\n\n"
+            f"Tone: {_EMAIL_TONES[tone]}\n\n"
+            "Now write the draft in your operator's voice, adapting every line to the real "
+            "person and situation — never send the beats verbatim. Save it with email_draft, "
+            "or email_send to send it (which pauses for your operator's approval).")
+
+
 def t_email_draft(agent, args, ctx):
     """Compose without sending. Always safe, so it never needs approval."""
     to = [a.strip() for a in str(args["to"]).split(",") if a.strip()]
@@ -294,6 +373,11 @@ SPECS = [
      "desc": "Search mail by subject, sender or body text.",
      "params": {"query": "what to look for", "field": "subject | from | body",
                 "folder": "folder, default INBOX"}},
+    {"name": "email_template", "fn": t_email_template, "required": [], "group": "Email", "danger": "low",
+     "desc": "Get the structure and tone for a kind of email before you write it. Sends nothing.",
+     "params": {"kind": "follow_up | intro | thank_you | decline | request | reminder | apology | update "
+                        "(omit to list all)",
+                "tone": "formal | warm | casual | brief | direct, default warm"}},
     {"name": "email_draft", "fn": t_email_draft, "required": ["to", "subject", "body"], "group": "Email", "danger": "low",
      "desc": "Write a reply and save it for review. Sends nothing.",
      "params": {"to": "recipients, comma separated", "subject": "subject line",

@@ -35,9 +35,10 @@ TEMPLATES = [
         ),
         "grants": {"read_file": "allow", "list_dir": "allow", "search_files": "allow",
                    "write_file": "allow", "run_shell": "deny", "http_fetch": "ask",
+                   "web_search": "ask", "web_read": "ask",
                    "remember": "allow", "recall": "allow", "delegate": "ask",
                    "email_list": "allow", "email_read": "allow", "email_search": "allow",
-                   "email_draft": "allow", "email_send": "ask",
+                   "email_template": "allow", "email_draft": "allow", "email_send": "ask",
                    "escalate": "allow", "plan": "allow", "finish": "allow"},
         "duties": [
             {"title": "Morning briefing", "cadence_minutes": 1440,
@@ -72,9 +73,10 @@ TEMPLATES = [
         ),
         "grants": {"read_file": "allow", "list_dir": "allow", "search_files": "allow",
                    "write_file": "allow", "run_shell": "deny", "http_fetch": "deny",
+                   "web_search": "ask", "web_read": "ask",
                    "remember": "allow", "recall": "allow", "delegate": "ask",
                    "email_list": "allow", "email_read": "allow", "email_search": "allow",
-                   "email_draft": "allow", "email_send": "ask",
+                   "email_template": "allow", "email_draft": "allow", "email_send": "ask",
                    "escalate": "allow", "plan": "allow", "finish": "allow"},
         "duties": [
             {"title": "Inbox triage", "cadence_minutes": 240,
